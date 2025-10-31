@@ -1,28 +1,34 @@
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 type InMessage = { role: 'user' | 'assistant' | 'system'; content: string };
 
+// Proxy streaming to backend service
 export async function POST(request: Request) {
-  const { messages } = (await request.json()) as { messages: InMessage[] };
-  const last = messages?.[messages.length - 1]?.content ?? '';
+    const payload = await request.json();
+    const messages: InMessage[] | undefined = payload?.messages;
+    const lastQuestion = Array.isArray(messages) && messages.length
+        ? messages[messages.length - 1]?.content ?? ''
+        : (payload?.question ?? '');
 
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      // Simple demo streamer: echos and adds tips token-by-token
-      const reply = `你说：${last}\n这是一个流式演示：`;
-      const tokens = (reply + ' ✅✅✅\n').split('');
-      for (const token of tokens) {
-        controller.enqueue(encoder.encode(token));
-        await new Promise(r => setTimeout(r, 20));
-      }
-      controller.close();
-    }
-  });
-
-  return new Response(stream, {
+    const backendUrl = process.env.BACKEND_BASE_URL || 'http://localhost:18080';
+    const resp = await fetch(`${backendUrl}/chat`, {
+        method: 'POST',
     headers: {
-      'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Type': 'application/json'
+    },
+        // Wrap into backend-required shape
+        body: JSON.stringify({question: lastQuestion})
+    });
+
+    if (!resp.ok || !resp.body) {
+        const text = await resp.text().catch(() => '');
+        return new Response(text || `Upstream error: ${resp.status}`, {status: 502});
+    }
+
+    // Stream passthrough (supports text/event-stream or chunked text)
+    return new Response(resp.body, {
+        headers: {
+            'Content-Type': resp.headers.get('content-type') || 'text/plain; charset=utf-8',
       'Cache-Control': 'no-store'
     }
   });
