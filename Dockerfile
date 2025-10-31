@@ -4,7 +4,7 @@ WORKDIR /app
 COPY . .
 RUN npm install --global corepack@latest && corepack enable pnpm
 ENV CI=true
-RUN pnpm install && pnpm build
+RUN pnpm install && pnpm build && pnpm export
 
 FROM nginx
 WORKDIR /usr/share/nginx/html
