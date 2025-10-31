@@ -2,175 +2,183 @@
 import {useEffect, useRef, useState} from 'react';
 
 type ChatMessage = {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
+    id: string;
+    role: 'user' | 'assistant';
+    content: string;
 };
 
 export default function Page() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState('');
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+    const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [input, setInput] = useState('');
+    const [isStreaming, setIsStreaming] = useState(false);
+    const [abortController, setAbortController] = useState<AbortController | null>(null);
+    const listRef = useRef<HTMLDivElement>(null);
     const revealBufferRef = useRef<string>('');
     const revealTimerRef = useRef<number | null>(null);
     const currentAssistantIdRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [messages.length]);
+    useEffect(() => {
+        listRef.current?.scrollTo({top: listRef.current.scrollHeight});
+    }, [messages.length]);
 
-  async function sendMessage() {
-    if (!input.trim() || isStreaming) return;
-    const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: input.trim() };
-    const assistantMsg: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', content: '' };
-    setMessages(prev => [...prev, userMsg, assistantMsg]);
-      currentAssistantIdRef.current = assistantMsg.id;
-    setInput('');
+    async function sendMessage() {
+        if (!input.trim() || isStreaming) return;
+        const userMsg: ChatMessage = {id: crypto.randomUUID(), role: 'user', content: input.trim()};
+        const assistantMsg: ChatMessage = {id: crypto.randomUUID(), role: 'assistant', content: ''};
+        setMessages(prev => [...prev, userMsg, assistantMsg]);
+        currentAssistantIdRef.current = assistantMsg.id;
+        setInput('');
 
-    const ac = new AbortController();
-    setAbortController(ac);
-    setIsStreaming(true);
+        const ac = new AbortController();
+        setAbortController(ac);
+        setIsStreaming(true);
 
-    try {
-      const resp = await fetch('/api/chat', {
-        method: 'POST',
-        body: JSON.stringify({ messages: [...messages, userMsg].map(m => ({ role: m.role, content: m.content })) }),
-        headers: { 'Content-Type': 'application/json' },
-        signal: ac.signal
-      });
-      if (!resp.ok || !resp.body) throw new Error(`Request failed: ${resp.status}`);
+        try {
+            const resp = await fetch('/api/chat', {
+                method: 'POST',
+                body: JSON.stringify({messages: [...messages, userMsg].map(m => ({role: m.role, content: m.content}))}),
+                headers: {'Content-Type': 'application/json'},
+                signal: ac.signal
+            });
+            if (!resp.ok || !resp.body) throw new Error(`Request failed: ${resp.status}`);
 
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let done = false;
-        let sseBuffer = '';
-        let sawSSE = false;
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let done = false;
+            let sseBuffer = '';
+            let sawSSE = false;
 
-        const flushTypingStart = () => {
-            if (revealTimerRef.current != null) return;
-            // Typing effect: reveal 2 chars every 16ms (~120 cps)
-            revealTimerRef.current = window.setInterval(() => {
-                const take = 2;
-                if (!revealBufferRef.current.length) return;
-                const chunk = revealBufferRef.current.slice(0, take);
-                revealBufferRef.current = revealBufferRef.current.slice(take);
+            const flushTypingStart = () => {
+                if (revealTimerRef.current != null) return;
+                // Typing effect: reveal 2 chars every 16ms (~120 cps)
+                revealTimerRef.current = window.setInterval(() => {
+                    const take = 2;
+                    if (!revealBufferRef.current.length) return;
+                    const chunk = revealBufferRef.current.slice(0, take);
+                    revealBufferRef.current = revealBufferRef.current.slice(take);
+                    const targetId = currentAssistantIdRef.current;
+                    if (!targetId) return;
+                    setMessages(prev => prev.map(m => m.id === targetId ? {...m, content: m.content + chunk} : m));
+                }, 16);
+            };
+            while (!done) {
+                const {value, done: doneReading} = await reader.read();
+                done = doneReading;
+                if (value) {
+                    const chunk = decoder.decode(value, {stream: true});
+                    sseBuffer += chunk;
+
+                    // Prefer immediate line-level consumption for SSE to reduce latency
+                    let nlIndex: number;
+                    while ((nlIndex = sseBuffer.indexOf('\n')) !== -1) {
+                        const line = sseBuffer.slice(0, nlIndex);
+                        sseBuffer = sseBuffer.slice(nlIndex + 1);
+                        if (line.startsWith('data:')) {
+                            sawSSE = true;
+                            const data = line.replace(/^data:\s?/, '');
+                            if (!data) continue;
+                            if (data === '[DONE]') {
+                                done = true;
+                                break;
+                            }
+                            // queue into typing buffer instead of direct render
+                            revealBufferRef.current += data;
+                            flushTypingStart();
+                        } else if (line.trim() === '') {
+                            // possibly end of event block, ignore
+                        } else if (!sawSSE) {
+                            // Not SSE: treat as plain text
+                            revealBufferRef.current += line + '\n';
+                            flushTypingStart();
+                        }
+                    }
+                }
+            }
+            // Flush any remaining buffer
+            if (sawSSE && sseBuffer) {
+                const lines = sseBuffer.split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data:')) {
+                        const data = line.replace(/^data:\s?/, '');
+                        if (data && data !== '[DONE]') {
+                            revealBufferRef.current += data;
+                        }
+                    }
+                }
+            } else if (!sawSSE && sseBuffer) {
+                revealBufferRef.current += sseBuffer;
+            }
+        } catch (err) {
+            setMessages(prev => prev.map(m => m.id === assistantMsg.id ? {
+                ...m,
+                content: (m.content || '') + '\n[流式已中断]'
+            } : m));
+        } finally {
+            // stop typing interval and append any remaining instantly
+            if (revealTimerRef.current != null) {
+                window.clearInterval(revealTimerRef.current);
+                revealTimerRef.current = null;
+            }
+            const remain = revealBufferRef.current;
+            if (remain && currentAssistantIdRef.current) {
                 const targetId = currentAssistantIdRef.current;
-                if (!targetId) return;
-                setMessages(prev => prev.map(m => m.id === targetId ? {...m, content: m.content + chunk} : m));
-            }, 16);
-        };
-      while (!done) {
-        const { value, done: doneReading } = await reader.read();
-        done = doneReading;
-        if (value) {
-            const chunk = decoder.decode(value, {stream: true});
-            sseBuffer += chunk;
-
-            // Prefer immediate line-level consumption for SSE to reduce latency
-            let nlIndex: number;
-            while ((nlIndex = sseBuffer.indexOf('\n')) !== -1) {
-                const line = sseBuffer.slice(0, nlIndex);
-                sseBuffer = sseBuffer.slice(nlIndex + 1);
-                if (line.startsWith('data:')) {
-                    sawSSE = true;
-                    const data = line.replace(/^data:\s?/, '');
-                    if (!data) continue;
-                    if (data === '[DONE]') {
-                        done = true;
-                        break;
-                    }
-                    // queue into typing buffer instead of direct render
-                    revealBufferRef.current += data;
-                    flushTypingStart();
-                } else if (line.trim() === '') {
-                    // possibly end of event block, ignore
-                } else if (!sawSSE) {
-                    // Not SSE: treat as plain text
-                    revealBufferRef.current += line + '\n';
-                    flushTypingStart();
-                }
+                setMessages(prev => prev.map(m => m.id === targetId ? {...m, content: m.content + remain} : m));
             }
+            revealBufferRef.current = '';
+            setIsStreaming(false);
+            setAbortController(null);
+            currentAssistantIdRef.current = null;
         }
-      }
-        // Flush any remaining buffer
-        if (sawSSE && sseBuffer) {
-            const lines = sseBuffer.split('\n');
-            for (const line of lines) {
-                if (line.startsWith('data:')) {
-                    const data = line.replace(/^data:\s?/, '');
-                    if (data && data !== '[DONE]') {
-                        revealBufferRef.current += data;
-                    }
-                }
-            }
-        } else if (!sawSSE && sseBuffer) {
-            revealBufferRef.current += sseBuffer;
-      }
-    } catch (err) {
-      setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, content: (m.content || '') + '\n[流式已中断]' } : m));
-    } finally {
-        // stop typing interval and append any remaining instantly
+    }
+
+    function stopStream() {
+        abortController?.abort();
         if (revealTimerRef.current != null) {
             window.clearInterval(revealTimerRef.current);
             revealTimerRef.current = null;
         }
-        const remain = revealBufferRef.current;
-        if (remain && currentAssistantIdRef.current) {
-            const targetId = currentAssistantIdRef.current;
-            setMessages(prev => prev.map(m => m.id === targetId ? {...m, content: m.content + remain} : m));
-        }
-        revealBufferRef.current = '';
-      setIsStreaming(false);
-      setAbortController(null);
-        currentAssistantIdRef.current = null;
     }
-  }
 
-  function stopStream() {
-    abortController?.abort();
-      if (revealTimerRef.current != null) {
-          window.clearInterval(revealTimerRef.current);
-          revealTimerRef.current = null;
-      }
-  }
-
-  return (
-    <div className="container">
-      <div className="card">
-        <div className="header">
-          <div className="title">AI Chat UI</div>
-          <div style={{ color: '#64748b', fontSize: 12 }}>{isStreaming ? '生成中…' : '就绪'}</div>
-        </div>
-        <div className="messages" ref={listRef}>
-          {messages.length === 0 && (
-            <div style={{ color: '#64748b' }}>开始对话吧，输入你的问题并发送。</div>
-          )}
-          {messages.map(m => (
-            <div key={m.id} className={`row ${m.role}`}>
-              <div className={`bubble ${m.role}`}>{m.content}</div>
+    return (
+        <div className="container">
+            <div className="card">
+                <div className="header">
+                    <div className="title">AI Chat UI</div>
+                    <div style={{color: '#64748b', fontSize: 12}}>{isStreaming ? '生成中…' : '就绪'}</div>
+                </div>
+                <div className="messages" ref={listRef}>
+                    {messages.length === 0 && (
+                        <div style={{color: '#64748b'}}>开始对话吧，输入你的问题并发送。</div>
+                    )}
+                    {messages.map(m => (
+                        <div key={m.id} className={`row ${m.role}`}>
+                            <div className={`bubble ${m.role}`}>{m.content}</div>
+                        </div>
+                    ))}
+                </div>
+                <div className="inputBar">
+                    <input
+                        className="textInput"
+                        placeholder="来说点什么…"
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                sendMessage();
+                            }
+                        }}
+                        disabled={isStreaming}
+                    />
+                    {isStreaming ? (
+                        <button className="button secondary" onClick={stopStream}>停止</button>
+                    ) : (
+                        <button className="button" onClick={sendMessage} disabled={!input.trim()}>发送</button>
+                    )}
+                </div>
             </div>
-          ))}
         </div>
-        <div className="inputBar">
-          <input
-            className="textInput"
-            placeholder="来说点什么…"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-            disabled={isStreaming}
-          />
-          {isStreaming ? (
-            <button className="button secondary" onClick={stopStream}>停止</button>
-          ) : (
-            <button className="button" onClick={sendMessage} disabled={!input.trim()}>发送</button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+    );
 }
 
 
