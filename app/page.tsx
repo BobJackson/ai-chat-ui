@@ -1,5 +1,8 @@
 "use client";
 import {useEffect, useRef, useState} from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
 
 type ChatMessage = {
     id: string;
@@ -20,6 +23,19 @@ export default function Page() {
     useEffect(() => {
         listRef.current?.scrollTo({top: listRef.current.scrollHeight});
     }, [messages.length]);
+
+    function normalizeMarkdown(input: string): string {
+        let s = input;
+        // Ensure headings start on new lines
+        s = s.replace(/([^\n])((?:#{1,6}))/g, '$1\n$2');
+        // Ensure a space after heading hashes
+        s = s.replace(/(^|\n)(#{1,6})([^\s#])/g, '$1$2 $3');
+        // Add newline before list hyphen after Chinese/ASCII colon
+        s = s.replace(/([：:])-(?=\S)/g, '$1\n- ');
+        // Ensure ordered list has a space after the dot
+        s = s.replace(/(^|\n)(\d+)\.([^\s])/g, '$1$2. $3');
+        return s;
+    }
 
     async function sendMessage() {
         if (!input.trim() || isStreaming) return;
@@ -152,7 +168,26 @@ export default function Page() {
                     )}
                     {messages.map(m => (
                         <div key={m.id} className={`row ${m.role}`}>
-                            <div className={`bubble ${m.role}`}>{m.content}</div>
+                            <div className={`bubble ${m.role}`}>
+                                {m.role === 'assistant' ? (
+                                    <div className="md">
+                                        <ReactMarkdown
+                                            remarkPlugins={[remarkGfm]}
+                                            rehypePlugins={[rehypeHighlight]}
+                                            components={{
+                                                a: ({children, ...props}) => (
+                                                    <a {...props} target="_blank"
+                                                       rel="noopener noreferrer">{children}</a>
+                                                )
+                                            }}
+                                        >
+                                            {normalizeMarkdown(m.content)}
+                                        </ReactMarkdown>
+                                    </div>
+                                ) : (
+                                    m.content
+                                )}
+                            </div>
                         </div>
                     ))}
                 </div>
