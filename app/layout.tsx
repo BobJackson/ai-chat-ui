@@ -1,3 +1,5 @@
+import './globals.css';
+
 export const metadata = {
   title: 'AI Chat UI',
   description: 'Streaming chat UI built with Next.js 16'
