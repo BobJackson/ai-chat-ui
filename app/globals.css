@@ -57,8 +57,9 @@ body {
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  max-width: 75%;
+    max-width: 68%;
   white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 .bubble.user { background: #eff6ff; border-color: #bfdbfe; }
