@@ -10,7 +10,7 @@ export async function POST(request: Request) {
         ? messages[messages.length - 1]?.content ?? ''
         : (payload?.question ?? '');
 
-    const backendUrl = process.env.BACKEND_BASE_URL || 'http://localhost:18080';
+    const backendUrl = process.env.BACKEND_BASE_URL || 'http://172.20.0.1:18080';
     const resp = await fetch(`${backendUrl}/chat`, {
         method: 'POST',
     headers: {
