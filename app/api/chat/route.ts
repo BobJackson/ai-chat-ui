@@ -10,6 +10,8 @@ export async function POST(request: Request) {
         ? messages[messages.length - 1]?.content ?? ''
         : (payload?.question ?? '');
 
+    console.log('current env =' + process.env)
+
     const backendUrl = process.env.BACKEND_BASE_URL || 'http://172.20.0.1:18080';
     const resp = await fetch(`${backendUrl}/chat`, {
         method: 'POST',
