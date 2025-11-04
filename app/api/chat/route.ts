@@ -14,7 +14,7 @@ export async function POST(request: Request) {
 
     const backendUrl = process.env.BACKEND_BASE_URL || 'http://host.docker.internal:18088';
     console.log('current backendUrl =' + backendUrl)
-    const resp = await fetch(`${backendUrl}/chat`, {
+    const resp = await fetch(`${backendUrl}/stream/chat`, {
         method: 'POST',
     headers: {
         'Content-Type': 'application/json'
