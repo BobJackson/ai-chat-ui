@@ -10,9 +10,9 @@ export async function POST(request: Request) {
         ? messages[messages.length - 1]?.content ?? ''
         : (payload?.question ?? '');
 
-    console.log('current env =' + process.env)
+    // console.log('current baseUrl =' + process.env.BACKEND_BASE_URL)
 
-    const backendUrl = process.env.BACKEND_BASE_URL || 'http://172.20.0.1:18080';
+    const backendUrl = process.env.BACKEND_BASE_URL || 'http://host.docker.internal:18088';
     const resp = await fetch(`${backendUrl}/chat`, {
         method: 'POST',
     headers: {
