@@ -38,16 +38,58 @@ export default function Page() {
     }, [messages.length]);
 
     function normalizeMarkdown(input: string): string {
-        let s = input;
-        // Ensure headings start on new lines
-        s = s.replace(/([^\n])((?:#{1,6}))/g, '$1\n$2');
-        // Ensure a space after heading hashes
-        s = s.replace(/(^|\n)(#{1,6})([^\s#])/g, '$1$2 $3');
-        // Add newline before list hyphen after Chinese/ASCII colon
-        s = s.replace(/([：:])-(?=\S)/g, '$1\n- ');
-        // Ensure ordered list has a space after the dot
-        s = s.replace(/(^|\n)(\d+)\.([^\s])/g, '$1$2. $3');
-        return s;
+        let output = input
+            // 1️⃣ 清理多余空格与控制符
+            .replace(/\r/g, '')
+            .replace(/[ \t]+/g, ' ')
+            .replace(/ +\n/g, '\n')
+            .trim();
+
+        // 2️⃣ 修复常见错误分隔符
+        output = output
+            .replace(/—{2,}/g, '—') // 连续破折号只保留一个
+            .replace(/—/g, '-') // 将单独的破折号转为 markdown 用的 "-"
+            .replace(/- -/g, '-') // 修复双破折号
+            .replace(/[-–—]{3,}/g, '\n\n---\n\n'); // 规范分隔线
+
+        // 3️⃣ 标题规范化
+        output = output
+            .replace(/(#+)\s*/g, '$1 ') // 确保标题后有空格
+            .replace(/###\s*\*\*(.*?)\*\*/g, '### $1')
+            .replace(/####\s*\*\*(.*?)\*\*/g, '#### $1')
+            .replace(/###\s*(.*?)($|\n)/g, '\n\n### $1\n\n')
+            .replace(/####\s*(.*?)($|\n)/g, '\n\n#### $1\n\n');
+
+        // 4️⃣ 智能识别时段标题
+        output = output.replace(/(\*\*.*?(上午|下午|晚上)：.*?\*\*)/g, '\n\n#### $1\n');
+
+        // 5️⃣ 规范列表项与时间节点
+        output = output
+            .replace(/-?\s*\*\*(\d{1,2}:\d{2})\*\*[:：]?\s*/g, '\n- **$1**：')
+            .replace(/\n\s*-\s*\*\*/g, '\n- **');
+
+        // 6️⃣ 修复被错误拆断的时间价格等数字连接
+        output = output
+            .replace(/(\d+)\s*-\s*(\d+)/g, '$1-$2')
+            .replace(/(\d+)\s*—\s*(\d+)/g, '$1-$2');
+
+        // 7️⃣ 清理过多空行，但保留段落结构
+        output = output
+            .replace(/\n{3,}/g, '\n\n')
+            .replace(/\n{2,}(- \*\*)/g, '\n$1') // 列表项前不多空行
+            .replace(/(- \*\*.*?\n)\n(- \*\*)/g, '$1$2') // 合并多余空行
+
+            // 8️⃣ 确保每个标题之间有空行
+            .replace(/(###|####)(.*?)(\S)/g, '$1$2\n\n$3');
+
+        // 9️⃣ 确保文本开头结尾干净
+        output = output.trim();
+        if (!output.startsWith('\n')) output = '\n' + output;
+        if (!output.endsWith('\n')) output += '\n';
+
+        console.log('Normalized Markdown:', output)
+
+        return output;
     }
 
     async function sendMessage() {
@@ -157,6 +199,11 @@ export default function Page() {
                 const targetId = currentAssistantIdRef.current;
                 setMessages(prev => prev.map(m => m.id === targetId ? {...m, content: m.content + remain} : m));
             }
+            // normalize the final assistant message once stream is done
+            setMessages(prev => prev.map(m => m.id === assistantMsg.id && m.role === 'assistant'
+                ? {...m, content: normalizeMarkdown(m.content)}
+                : m
+            ));
             revealBufferRef.current = '';
             setIsStreaming(false);
             setAbortController(null);
@@ -198,7 +245,7 @@ export default function Page() {
                                                 )
                                             }}
                                         >
-                                            {normalizeMarkdown(m.content)}
+                                            {m.content}
                                         </ReactMarkdown>
                                     </div>
                                 ) : (
