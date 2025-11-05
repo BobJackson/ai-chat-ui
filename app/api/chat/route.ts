@@ -16,9 +16,9 @@ export async function POST(request: Request) {
     console.log('current backendUrl =' + backendUrl)
     const resp = await fetch(`${backendUrl}/stream/chat`, {
         method: 'POST',
-    headers: {
-        'Content-Type': 'application/json'
-    },
+        headers: {
+            'Content-Type': 'application/json'
+        },
         // Wrap into backend-required shape
         body: JSON.stringify({question: lastQuestion})
     });
@@ -32,9 +32,9 @@ export async function POST(request: Request) {
     return new Response(resp.body, {
         headers: {
             'Content-Type': resp.headers.get('content-type') || 'text/plain; charset=utf-8',
-      'Cache-Control': 'no-store'
-    }
-  });
+            'Cache-Control': 'no-store'
+        }
+    });
 }
 
 
