@@ -10,6 +10,8 @@ type ChatMessage = {
     content: string;
 };
 
+const CONVERSATION_ID_KEY = 'ai-chat-conversation-id';
+
 export default function Page() {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
@@ -19,6 +21,17 @@ export default function Page() {
     const revealBufferRef = useRef<string>('');
     const revealTimerRef = useRef<number | null>(null);
     const currentAssistantIdRef = useRef<string | null>(null);
+
+    // 获取或生成conversationId
+    const getOrCreateConversationId = (): string => {
+        if (typeof window === 'undefined') return '';
+        let conversationId = localStorage.getItem(CONVERSATION_ID_KEY);
+        if (!conversationId) {
+            conversationId = crypto.randomUUID();
+            localStorage.setItem(CONVERSATION_ID_KEY, conversationId);
+        }
+        return conversationId;
+    };
 
     useEffect(() => {
         listRef.current?.scrollTo({top: listRef.current.scrollHeight});
@@ -50,9 +63,13 @@ export default function Page() {
         setIsStreaming(true);
 
         try {
+            const conversationId = getOrCreateConversationId();
             const resp = await fetch('/api/chat', {
                 method: 'POST',
-                body: JSON.stringify({messages: [...messages, userMsg].map(m => ({role: m.role, content: m.content}))}),
+                body: JSON.stringify({
+                    messages: [...messages, userMsg].map(m => ({role: m.role, content: m.content})),
+                    conversationId: conversationId
+                }),
                 headers: {'Content-Type': 'application/json'},
                 signal: ac.signal
             });

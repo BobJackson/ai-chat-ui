@@ -6,6 +6,7 @@ type InMessage = { role: 'user' | 'assistant' | 'system'; content: string };
 export async function POST(request: Request) {
     const payload = await request.json();
     const messages: InMessage[] | undefined = payload?.messages;
+    const conversationId: string | undefined = payload?.conversationId;
     const lastQuestion = Array.isArray(messages) && messages.length
         ? messages[messages.length - 1]?.content ?? ''
         : (payload?.question ?? '');
@@ -14,13 +15,20 @@ export async function POST(request: Request) {
 
     const backendUrl = process.env.BACKEND_BASE_URL || 'http://host.docker.internal:18088';
     console.log('current backendUrl =' + backendUrl)
+    
+    // 构建请求体，包含question和conversationId
+    const requestBody: { question: string; conversationId?: string } = {question: lastQuestion};
+    if (conversationId) {
+        requestBody.conversationId = conversationId;
+    }
+    
     const resp = await fetch(`${backendUrl}/stream/chat`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
         },
         // Wrap into backend-required shape
-        body: JSON.stringify({question: lastQuestion})
+        body: JSON.stringify(requestBody)
     });
 
     if (!resp.ok || !resp.body) {
