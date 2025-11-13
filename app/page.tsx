@@ -17,10 +17,19 @@ export default function Page() {
     const [input, setInput] = useState('');
     const [isStreaming, setIsStreaming] = useState(false);
     const [abortController, setAbortController] = useState<AbortController | null>(null);
+    // 语音相关状态
+    const [isRecording, setIsRecording] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [recordingTime, setRecordingTime] = useState(0);
+    
     const listRef = useRef<HTMLDivElement>(null);
     const revealBufferRef = useRef<string>('');
     const revealTimerRef = useRef<number | null>(null);
     const currentAssistantIdRef = useRef<string | null>(null);
+    // 语音相关引用
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const audioChunksRef = useRef<Blob[]>([]);
+    const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     // 获取或生成conversationId
     const getOrCreateConversationId = (): string => {
@@ -36,6 +45,18 @@ export default function Page() {
     useEffect(() => {
         listRef.current?.scrollTo({top: listRef.current.scrollHeight});
     }, [messages.length]);
+
+    // 清理定时器
+    useEffect(() => {
+        return () => {
+            if (recordingTimerRef.current) {
+                clearInterval(recordingTimerRef.current);
+            }
+            if (revealTimerRef.current) {
+                clearInterval(revealTimerRef.current);
+            }
+        };
+    }, []);
 
     function normalizeMarkdown(input: string): string {
         let output = input
@@ -98,9 +119,174 @@ export default function Page() {
         return output;
     }
 
-    async function sendMessage() {
-        if (!input.trim() || isStreaming) return;
-        const userMsg: ChatMessage = {id: crypto.randomUUID(), role: 'user', content: input.trim()};
+    // 开始录音
+    async function startRecording() {
+        if (isStreaming) return;
+
+        try {
+            setIsRecording(true);
+            setRecordingTime(0);
+
+            // 开始计时
+            if (recordingTimerRef.current) {
+                clearInterval(recordingTimerRef.current);
+            }
+            recordingTimerRef.current = setInterval(() => {
+                setRecordingTime(prev => prev + 1);
+            }, 1000);
+
+            // 启动语音识别
+            await transcribeAudio();
+        } catch (err) {
+            console.error('录音失败:', err);
+            alert('无法访问麦克风，请检查权限设置');
+            setIsRecording(false);
+            if (recordingTimerRef.current) {
+                clearInterval(recordingTimerRef.current);
+                recordingTimerRef.current = null;
+            }
+        }
+    }
+
+    // 停止录音
+    function stopRecording() {
+        if (isRecording) {
+            setIsRecording(false);
+            if (recordingTimerRef.current) {
+                clearInterval(recordingTimerRef.current);
+                recordingTimerRef.current = null;
+            }
+        }
+    }
+
+    // 语音识别
+    async function transcribeAudio() {
+        try {
+            // 使用 Web Speech API 进行语音识别
+            const recognizedText = await speechToText();
+
+            if (recognizedText) {
+                setInput(recognizedText);
+                // 短暂延迟后自动发送消息
+                setTimeout(() => {
+                    sendMessage(recognizedText);
+                }, 300);
+            }
+        } catch (err: any) {
+            console.error('语音识别失败:', err);
+            alert(`语音识别失败: ${err.message || '请重试'}`);
+        } finally {
+            setIsProcessing(false);
+            // 确保录音状态被重置
+            setIsRecording(false);
+            if (recordingTimerRef.current) {
+                clearInterval(recordingTimerRef.current);
+                recordingTimerRef.current = null;
+            }
+        }
+    }
+
+    // 使用 Web Speech API 实现语音转文字
+    async function speechToText(): Promise<string> {
+        return new Promise((resolve, reject) => {
+            // 检查浏览器是否支持 Web Speech API
+            const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+
+            if (!SpeechRecognition) {
+                reject(new Error('浏览器不支持语音识别功能，请使用现代浏览器（如Chrome）并启用相关权限'));
+                return;
+            }
+
+            const recognition = new SpeechRecognition();
+            recognition.lang = 'zh-CN'; // 设置语言为中文
+            recognition.interimResults = false; // 只获取最终结果
+            recognition.maxAlternatives = 1; // 只获取一个识别结果
+            recognition.continuous = false; // 只识别一次就结束
+
+            let recognitionTimeout: NodeJS.Timeout | null = null;
+
+            recognition.onstart = () => {
+                console.log('语音识别开始');
+                // 设置超时
+                recognitionTimeout = setTimeout(() => {
+                    recognition.stop();
+                    reject(new Error('语音识别超时，请说话或重试'));
+                }, 10000);
+            };
+
+            recognition.onresult = (event: any) => {
+                // 清除超时定时器
+                if (recognitionTimeout) {
+                    clearTimeout(recognitionTimeout);
+                    recognitionTimeout = null;
+                }
+
+                if (event.results && event.results.length > 0 && event.results[0].isFinal) {
+                    const transcript = event.results[0][0].transcript;
+                    console.log('识别结果:', transcript);
+                    resolve(transcript);
+                } else {
+                    reject(new Error('未识别到有效语音内容'));
+                }
+            };
+
+            recognition.onerror = (event: any) => {
+                // 清除超时定时器
+                if (recognitionTimeout) {
+                    clearTimeout(recognitionTimeout);
+                    recognitionTimeout = null;
+                }
+                console.error('语音识别出错:', event);
+                reject(new Error(`语音识别出错: ${event.error || '未知错误'}`));
+            };
+
+            recognition.onend = () => {
+                // 清除超时定时器
+                if (recognitionTimeout) {
+                    clearTimeout(recognitionTimeout);
+                    recognitionTimeout = null;
+                }
+                console.log('语音识别结束');
+            };
+
+            try {
+                // 开始语音识别
+                recognition.start();
+            } catch (err) {
+                if (recognitionTimeout) {
+                    clearTimeout(recognitionTimeout);
+                    recognitionTimeout = null;
+                }
+                reject(new Error('语音识别初始化失败'));
+            }
+        });
+    }
+
+    // 模拟语音识别过程（已废弃，保留以防 Web Speech API 不可用）
+    async function simulateSpeechRecognition(audioBlob: Blob): Promise<string> {
+        // 在实际应用中，这里应该调用真正的语音识别服务
+        // 例如使用Web Speech API或调用后端API进行语音识别
+
+        // 模拟识别延迟
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // 模拟一些识别结果
+        const sampleTexts = [
+            "你好，帮我写一个Python快速排序算法",
+            "今天天气怎么样？",
+            "帮我解释一下机器学习的概念",
+            "JavaScript中async/await和Promise的区别是什么？",
+            "写一个简单的React组件示例"
+        ];
+
+        // 实际应用中应使用真实识别结果
+        return sampleTexts[Math.floor(Math.random() * sampleTexts.length)];
+    }
+
+    async function sendMessage(customInput?: string) {
+        const messageContent = customInput || input;
+        if (!messageContent.trim() || isStreaming) return;
+        const userMsg: ChatMessage = {id: crypto.randomUUID(), role: 'user', content: messageContent.trim()};
         const assistantMsg: ChatMessage = {id: crypto.randomUUID(), role: 'assistant', content: ''};
         setMessages(prev => [...prev, userMsg, assistantMsg]);
         currentAssistantIdRef.current = assistantMsg.id;
@@ -225,12 +411,21 @@ export default function Page() {
         }
     }
 
+    // 格式化录音时间显示
+    function formatTime(seconds: number): string {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
+
     return (
         <div className="container">
             <div className="card">
                 <div className="header">
                     <div className="title">AI Chat UI</div>
-                    <div style={{color: '#64748b', fontSize: 12}}>{isStreaming ? '生成中…' : '就绪'}</div>
+                    <div style={{color: '#64748b', fontSize: 12}}>
+                        {isStreaming ? '生成中…' : isRecording ? `录音中 ${formatTime(recordingTime)}` : '就绪'}
+                    </div>
                 </div>
                 <div className="messages" ref={listRef}>
                     {messages.length === 0 && (
@@ -273,17 +468,38 @@ export default function Page() {
                                 sendMessage();
                             }
                         }}
-                        disabled={isStreaming}
+                        disabled={isStreaming || isRecording || isProcessing}
                     />
+                    <div className="voiceButtonContainer">
+                        <button
+                            className={`voiceButton ${isRecording ? 'recording' : ''}`}
+                            onMouseDown={startRecording}
+                            onMouseUp={stopRecording}
+                            onMouseLeave={stopRecording}
+                            onTouchStart={(e) => {
+                                e.preventDefault();
+                                startRecording();
+                            }}
+                            onTouchEnd={(e) => {
+                                e.preventDefault();
+                                stopRecording();
+                            }}
+                            disabled={isStreaming || isProcessing}
+                            title="按住说话"
+                        >
+                            {isRecording ? '松开结束' : '按住说话'}
+                        </button>
+                    </div>
                     {isStreaming ? (
                         <button className="button secondary" onClick={stopStream}>停止</button>
                     ) : (
-                        <button className="button" onClick={sendMessage} disabled={!input.trim()}>发送</button>
+                        <button className="button" onClick={() => sendMessage()}
+                                disabled={!input.trim() || isRecording || isProcessing}>
+                            发送
+                        </button>
                     )}
                 </div>
             </div>
         </div>
     );
 }
-
-
