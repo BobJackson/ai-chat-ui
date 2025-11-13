@@ -3,6 +3,7 @@ import {useEffect, useRef, useState} from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import {normalizeMarkdown} from './utils/markdown';
 
 type ChatMessage = {
     id: string;
@@ -21,6 +22,7 @@ export default function Page() {
     const [isRecording, setIsRecording] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const [recordingTime, setRecordingTime] = useState(0);
+    const [isMobile, setIsMobile] = useState(false); // 添加设备类型状态
     
     const listRef = useRef<HTMLDivElement>(null);
     const revealBufferRef = useRef<string>('');
@@ -42,9 +44,19 @@ export default function Page() {
         return conversationId;
     };
 
+    // 检测设备类型
     useEffect(() => {
-        listRef.current?.scrollTo({top: listRef.current.scrollHeight});
-    }, [messages.length]);
+        const checkIsMobile = () => {
+            if (typeof window !== 'undefined') {
+                const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera;
+                const mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+                return mobileRegex.test(userAgent);
+            }
+            return false;
+        };
+
+        setIsMobile(checkIsMobile());
+    }, []);
 
     // 清理定时器
     useEffect(() => {
@@ -58,66 +70,10 @@ export default function Page() {
         };
     }, []);
 
-    function normalizeMarkdown(input: string): string {
-        let output = input
-            // 1️⃣ 清理多余空格与控制符
-            .replace(/\r/g, '')
-            .replace(/[ \t]+/g, ' ')
-            .replace(/ +\n/g, '\n')
-            .trim();
-
-        // 2️⃣ 修复常见错误分隔符与破折号
-        output = output
-            .replace(/—{2,}/g, '—')
-            .replace(/—/g, '-') // 替换为 Markdown 用短横线
-            .replace(/- -/g, '-')
-            .replace(/[-–—]{3,}/g, '\n\n---\n\n'); // 规范分隔线
-
-        // 3️⃣ 标题规范化
-        output = output
-            .replace(/(#+)\s*/g, '$1 ')
-            .replace(/###\s*\*\*(.*?)\*\*/g, '### $1')
-            .replace(/####\s*\*\*(.*?)\*\*/g, '#### $1')
-            .replace(/###\s*(.*?)($|\n)/g, '\n\n### $1\n\n')
-            .replace(/####\s*(.*?)($|\n)/g, '\n\n#### $1\n\n');
-
-        // 4️⃣ 智能识别时段标题
-        output = output.replace(/(\*\*.*?(上午|下午|晚上)：.*?\*\*)/g, '\n\n#### $1\n');
-
-        // 5️⃣ 规范时间节点与无序列表
-        output = output
-            .replace(/-?\s*\*\*(\d{1,2}:\d{2})\*\*[:：]?\s*/g, '\n- **$1**：')
-            .replace(/\n\s*-\s*\*\*/g, '\n- **');
-
-        // 6️⃣ 修复被错误拆断的数字或范围
-        output = output
-            .replace(/(\d+)\s*-\s*(\d+)/g, '$1-$2')
-            .replace(/(\d+)\s*—\s*(\d+)/g, '$1-$2');
-
-        // 7️⃣ 清理空行、保持段落结构
-        output = output
-            .replace(/\n{3,}/g, '\n\n')
-            .replace(/\n{2,}(- \*\*)/g, '\n$1')
-            .replace(/(- \*\*.*?\n)\n(- \*\*)/g, '$1$2');
-
-        // 8️⃣ 确保标题间距
-        output = output.replace(/(###|####)(.*?)(\S)/g, '$1$2\n\n$3');
-
-        // 9️⃣ 🧹 清理空的无序列表项（重点改进）
-        output = output
-            .replace(/^-+\s*$/gm, '') // 删除只有破折号的行
-            .replace(/^\s*-\s*([·•]*)?\s*$/gm, '') // 删除空的 bullet 列表项
-            .replace(/\n{2,}\n/g, '\n\n'); // 重新规整空行
-
-        // 🔟 结尾/开头清理
-        output = output.trim();
-        if (!output.startsWith('\n')) output = '\n' + output;
-        if (!output.endsWith('\n')) output += '\n';
-
-        console.log('Normalized Markdown:', output)
-
-        return output;
-    }
+    // 检测是否为移动设备
+    const isMobileDevice = () => {
+        return isMobile;
+    };
 
     // 开始录音
     async function startRecording() {
@@ -155,6 +111,39 @@ export default function Page() {
             if (recordingTimerRef.current) {
                 clearInterval(recordingTimerRef.current);
                 recordingTimerRef.current = null;
+            }
+        }
+    }
+
+    // 切换录音状态（用于桌面端的点击切换模式）
+    async function toggleRecording() {
+        if (isRecording) {
+            stopRecording();
+        } else {
+            if (isStreaming) return;
+
+            try {
+                setIsRecording(true);
+                setRecordingTime(0);
+
+                // 开始计时
+                if (recordingTimerRef.current) {
+                    clearInterval(recordingTimerRef.current);
+                }
+                recordingTimerRef.current = setInterval(() => {
+                    setRecordingTime(prev => prev + 1);
+                }, 1000);
+
+                // 启动语音识别
+                await transcribeAudio();
+            } catch (err) {
+                console.error('录音失败:', err);
+                alert('无法访问麦克风，请检查权限设置');
+                setIsRecording(false);
+                if (recordingTimerRef.current) {
+                    clearInterval(recordingTimerRef.current);
+                    recordingTimerRef.current = null;
+                }
             }
         }
     }
@@ -450,24 +439,37 @@ export default function Page() {
                         disabled={isStreaming || isRecording || isProcessing}
                     />
                     <div className="voiceButtonContainer">
-                        <button
-                            className={`voiceButton ${isRecording ? 'recording' : ''}`}
-                            onMouseDown={startRecording}
-                            onMouseUp={stopRecording}
-                            onMouseLeave={stopRecording}
-                            onTouchStart={(e) => {
-                                e.preventDefault();
-                                startRecording();
-                            }}
-                            onTouchEnd={(e) => {
-                                e.preventDefault();
-                                stopRecording();
-                            }}
-                            disabled={isStreaming || isProcessing}
-                            title="按住说话"
-                        >
-                            {isRecording ? '松开结束' : '按住说话'}
-                        </button>
+                        {isMobileDevice() ? (
+                            // 移动端使用长按交互
+                            <button
+                                className={`voiceButton ${isRecording ? 'recording' : ''}`}
+                                onMouseDown={startRecording}
+                                onMouseUp={stopRecording}
+                                onMouseLeave={stopRecording}
+                                onTouchStart={(e) => {
+                                    e.preventDefault();
+                                    startRecording();
+                                }}
+                                onTouchEnd={(e) => {
+                                    e.preventDefault();
+                                    stopRecording();
+                                }}
+                                disabled={isStreaming || isProcessing}
+                                title="按住说话"
+                            >
+                                {isRecording ? '松开结束' : '按住说话'}
+                            </button>
+                        ) : (
+                            // 桌面端使用点击切换交互
+                            <button
+                                className={`voiceButton ${isRecording ? 'recording' : ''}`}
+                                onClick={toggleRecording}
+                                disabled={isStreaming || isProcessing}
+                                title="语音输入"
+                            >
+                                {isRecording ? '停止录音' : '语音输入'}
+                            </button>
+                        )}
                     </div>
                     {isStreaming ? (
                         <button className="button secondary" onClick={stopStream}>停止</button>
