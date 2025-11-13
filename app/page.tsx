@@ -262,27 +262,6 @@ export default function Page() {
         });
     }
 
-    // 模拟语音识别过程（已废弃，保留以防 Web Speech API 不可用）
-    async function simulateSpeechRecognition(audioBlob: Blob): Promise<string> {
-        // 在实际应用中，这里应该调用真正的语音识别服务
-        // 例如使用Web Speech API或调用后端API进行语音识别
-
-        // 模拟识别延迟
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // 模拟一些识别结果
-        const sampleTexts = [
-            "你好，帮我写一个Python快速排序算法",
-            "今天天气怎么样？",
-            "帮我解释一下机器学习的概念",
-            "JavaScript中async/await和Promise的区别是什么？",
-            "写一个简单的React组件示例"
-        ];
-
-        // 实际应用中应使用真实识别结果
-        return sampleTexts[Math.floor(Math.random() * sampleTexts.length)];
-    }
-
     async function sendMessage(customInput?: string) {
         const messageContent = customInput || input;
         if (!messageContent.trim() || isStreaming) return;
