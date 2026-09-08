@@ -1,12 +1,6 @@
 {
   "name": "ai-chat-ui",
   "version": "0.1.0",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "sharp",
-      "unrs-resolver"
-    ]
-  },
   "private": true,
   "scripts": {
     "dev": "next dev",
